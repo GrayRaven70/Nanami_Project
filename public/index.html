@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>七实 - 拥有记忆的躯壳</title>
+    <style>
+        body { background-color: #0b0d11; color: #abb2bf; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; margin-top: 20px; }
+        canvas { background-color: #17191e; border: 2px solid #3e4451; border-radius: 12px; cursor: crosshair; }
+        #status { margin-top: 15px; font-size: 14px; color: #61afef; display: flex; gap: 20px; }
+        .stat { display: flex; align-items: center; gap: 5px; }
+    </style>
+</head>
+<body>
+    <h2>七实 · 灵魂存档版</h2>
+    <p style="color: #5c6370; font-size: 13px;">关掉网页再打开，看看她记不记得你。</p>
+    <canvas id="canvas" width="800" height="600"></canvas>
+    <div id="status">
+        <div class="stat">⚡ 体力: <span id="energy-val">100</span>%</div>
+        <div class="stat">💖 好感度: <span id="affection-val">0</span></div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const energyVal = document.getElementById('energy-val');
+        const affectionVal = document.getElementById('affection-val');
+
+        let nanami = {
+            x: 400, y: 300, vx: 0, vy: 0, radius: 18,
+            eyeAngle: 0, wheelOffset: 0,
+            energy: 100, affection: 0,
+            mood: 'bored', moodTimer: 0,
+            bubbleText: '等待连接记忆库...',
+            bubbleTimer: 120,
+            saveTimer: 0 // 用于定时保存到数据库
+        };
+        let mouse = { x: 400, y: 300, active: false };
+        let particles = [];
+
+        // === 核心：从 MySQL 读取她的记忆 ===
+        fetch('http://localhost:3000/api/nanami')
+            .then(res => res.json())
+            .then(data => {
+                if (data) {
+                    nanami.affection = data.affection;
+                    nanami.energy = data.energy;
+                    // 根据好感度说不同的话
+                    if (nanami.affection > 50) {
+                        nanami.bubbleText = '你回来啦！我好想你。';
+                    } else if (nanami.affection > 0) {
+                        nanami.bubbleText = '又是你呀，你好。';
+                    } else {
+                        nanami.bubbleText = '初次见面，你是谁？';
+                    }
+                    nanami.bubbleTimer = 180;
+                }
+            })
+            .catch(err => {
+                nanami.bubbleText = '记忆库没连上呜呜呜';
+                console.error("请确认 Node 服务是否启动", err);
+            });
+
+        // === 核心：将她的记忆保存到 MySQL ===
+        function saveMemory() {
+            fetch('http://localhost:3000/api/nanami', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    affection: nanami.affection, 
+                    energy: Math.round(nanami.energy) 
+                })
+            }).catch(err => console.log("保存失败", err));
+        }
+
+        // 在页面关闭时保存一次
+        window.addEventListener('beforeunload', saveMemory);
+
+        // --- 以下为原有的交互逻辑 ---
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+            mouse.active = true;
+            let dist = Math.hypot(nanami.x - mouse.x, nanami.y - mouse.y);
+            if (dist < 200 && nanami.mood !== 'scared' && nanami.mood !== 'happy') nanami.mood = 'curious';
+        });
+        canvas.addEventListener('mouseleave', () => { mouse.active = false; });
+
+        canvas.addEventListener('mousedown', () => {
+            const dist = Math.hypot(nanami.x - mouse.x, nanami.y - mouse.y);
+            if (dist < nanami.radius + 20) {
+                nanami.affection = Math.min(100, nanami.affection + 5);
+                nanami.energy = Math.min(100, nanami.energy + 10);
+                nanami.mood = 'happy';
+                nanami.moodTimer = 60;
+                
+                if (nanami.affection < 30) nanami.bubbleText = '唔...有点痒痒的。';
+                else if (nanami.affection < 70) nanami.bubbleText = '嘿嘿，好暖和...';
+                else nanami.bubbleText = '最喜欢你啦！';
+                nanami.bubbleTimer = 90;
+                saveMemory(); // 摸完立刻存一次档
+            }
+        });
+
+        function update() {
+            // 体力与运动逻辑（同上一版）
+            let speed = Math.hypot(nanami.vx, nanami.vy);
+            if (nanami.mood !== 'sleeping') {
+                nanami.energy -= speed * 0.02;
+                if (nanami.energy <= 0) { nanami.mood = 'sleeping'; nanami.vx = 0; nanami.vy = 0; }
+            } else {
+                nanami.energy += 0.5;
+                if (nanami.energy >= 100) { nanami.energy = 100; nanami.mood = 'bored'; }
+                nanami.vx = 0; nanami.vy = 0;
+            }
+
+            if (nanami.moodTimer > 0 && nanami.mood !== 'sleeping') {
+                nanami.moodTimer--;
+                if (nanami.moodTimer === 0) nanami.mood = 'bored';
+            }
+
+            if (nanami.mood !== 'sleeping') {
+                if (nanami.mood === 'bored') {
+                    if (Math.random() < 0.03) {
+                        nanami.vx += (Math.random() - 0.5) * 1.5; nanami.vy += (Math.random() - 0.5) * 1.5;
+                    }
+                } else if (nanami.mood === 'curious' && mouse.active) {
+                    let dx = mouse.x - nanami.x, dy = mouse.y - nanami.y;
+                    let dist = Math.hypot(dx, dy);
+                    let speedFactor = nanami.energy > 30 ? 0.25 : 0.1; 
+                    if (dist > 50) { nanami.vx += (dx / dist) * speedFactor; nanami.vy += (dy / dist) * speedFactor; }
+                }
+            }
+
+            nanami.vx *= 0.92; nanami.vy *= 0.92;
+            if (speed > 3) { nanami.vx = (nanami.vx / speed) * 3; nanami.vy = (nanami.vy / speed) * 3; }
+            nanami.x += nanami.vx; nanami.y += nanami.vy;
+
+            if (nanami.x < nanami.radius || nanami.x > canvas.width - nanami.radius) { nanami.vx *= -1; nanami.x = Math.max(nanami.radius, Math.min(canvas.width - nanami.radius, nanami.x)); }
+            if (nanami.y < nanami.radius || nanami.y > canvas.height - nanami.radius) { nanami.vy *= -1; nanami.y = Math.max(nanami.radius, Math.min(canvas.height - nanami.radius, nanami.y)); }
+
+            nanami.eyeAngle = Math.atan2(mouse.active ? mouse.y - nanami.y : nanami.vy, mouse.active ? mouse.x - nanami.x : nanami.vx);
+            if (Math.hypot(nanami.vx, nanami.vy) > 0.5) nanami.wheelOffset += Math.hypot(nanami.vx, nanami.vy) * 0.5;
+
+            energyVal.innerText = Math.round(nanami.energy);
+            affectionVal.innerText = nanami.affection;
+
+            // 每隔大约3秒（180帧）自动保存一次体力和好感
+            nanami.saveTimer++;
+            if (nanami.saveTimer > 180) {
+                saveMemory();
+                nanami.saveTimer = 0;
+            }
+
+            draw();
+            requestAnimationFrame(update);
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (mouse.active) {
+                let grad = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, 80);
+                grad.addColorStop(0, 'rgba(255, 230, 150, 0.15)'); grad.addColorStop(1, 'rgba(255, 230, 150, 0)');
+                ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(mouse.x, mouse.y, 80, 0, Math.PI * 2); ctx.fill();
+            }
+
+            ctx.save(); ctx.translate(nanami.x, nanami.y);
+            ctx.fillStyle = '#555';
+            const drawWheel = (wx, wy) => {
+                ctx.save(); ctx.translate(wx, wy); ctx.rotate(nanami.wheelOffset);
+                ctx.fillRect(-8, -4, 16, 8); ctx.strokeStyle = '#888'; ctx.beginPath(); ctx.moveTo(-8,0); ctx.lineTo(8,0); ctx.stroke(); ctx.restore();
+            }
+            drawWheel(-15, 16); drawWheel(15, 16);
+
+            ctx.beginPath(); ctx.arc(0, 0, nanami.radius, 0, Math.PI * 2);
+            if (nanami.mood === 'sleeping') ctx.fillStyle = '#3e4451';
+            else if (nanami.mood === 'happy') ctx.fillStyle = '#ff6b81';
+            else if (nanami.mood === 'curious') ctx.fillStyle = '#98c379';
+            else ctx.fillStyle = '#61afef';
+            ctx.fill(); ctx.strokeStyle = nanami.mood === 'sleeping' ? '#5c6370' : '#fff'; ctx.lineWidth = 2; ctx.stroke();
+
+            ctx.save();
+            if (nanami.mood === 'sleeping') {
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(5, -3); ctx.lineTo(12, -3); ctx.stroke();
+            } else {
+                ctx.rotate(nanami.eyeAngle); ctx.beginPath(); ctx.arc(10, 0, 5, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+                ctx.beginPath(); ctx.arc(12, 0, nanami.mood === 'happy' ? 3 : 2, 0, Math.PI * 2); ctx.fillStyle = '#000'; ctx.fill();
+            }
+            ctx.restore(); ctx.restore();
+
+            if (nanami.bubbleTimer > 0 && nanami.mood !== 'sleeping') {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'; ctx.font = '14px "Segoe UI"';
+                const textWidth = ctx.measureText(nanami.bubbleText).width;
+                const bx = nanami.x - textWidth / 2 - 8; const by = nanami.y - nanami.radius - 35;
+                ctx.beginPath(); ctx.roundRect(bx, by, textWidth + 16, 26, 6); ctx.fill();
+                ctx.beginPath(); ctx.moveTo(nanami.x - 5, by + 26); ctx.lineTo(nanami.x + 5, by + 26); ctx.lineTo(nanami.x, nanami.y - nanami.radius - 5); ctx.fill();
+                ctx.fillStyle = '#222'; ctx.textAlign = 'center'; ctx.fillText(nanami.bubbleText, nanami.x, by + 18);
+            }
+        }
+
+        // 页面加载完成，开始更新
+        setInterval(() => { if (nanami.bubbleTimer > 0) nanami.bubbleTimer--; }, 16); // 简单地处理气泡计时
+        update();
+    </script>
+</body>
+</html>
