@@ -40,6 +40,12 @@
         </div>
     </div>
 
+        <!-- 加在聊天框的下方 -->
+    <div style="margin-top: 10px; width: 800px; display: flex; gap: 10px;">
+        <input type="text" id="teach-input" placeholder="教七实一句话吧（比如：我喜欢看星星）..." style="flex: 1; padding: 10px; background: #1e2129; border: 1px dashed #e5c07b; color: #abb2bf; border-radius: 6px; outline: none;">
+        <button id="teach-btn" style="padding: 10px 20px; background: #e5c07b; color: #111; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">教她说话</button>
+    </div>
+
     <script>
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
@@ -72,9 +78,18 @@
                 if (data) {
                     nanami.affection = data.affection;
                     nanami.energy = data.energy;
-                    if (nanami.affection > 50) nanami.bubbleText = '你回来啦！我好想你。';
-                    else if (nanami.affection > 0) nanami.bubbleText = '又是你呀，你好。';
-                    else nanami.bubbleText = '初次见面，你是谁？';
+                    
+                    // 🌟 核心新增：读取她的名字！如果数据库里没有，默认叫七实
+                    let herName = data.name || "七实";
+                    
+                    // 根据好感度说不同的话，并且带上她的名字
+                    if (nanami.affection > 50) {
+                        nanami.bubbleText = `你回来啦！我是${herName}，我好想你。`;
+                    } else if (nanami.affection > 0) {
+                        nanami.bubbleText = `又是你呀，你好。我是${herName}。`;
+                    } else {
+                        nanami.bubbleText = `初次见面，我是${herName}，你是谁？`;
+                    }
                     nanami.bubbleTimer = 180;
                 }
             })
@@ -274,7 +289,7 @@
             nanami.bubbleText = '...';
             nanami.bubbleTimer = 60;
 
-                       // 3. 发送给后端，带上她的状态，和最近3句聊天记录
+            // 3. 发送给后端，带上她的状态，和最近3句聊天记录
             fetch('http://localhost:3000/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -305,6 +320,7 @@
                 
                 saveMemory(); // 存进数据库
             })
+            
         }
 
         sendBtn.addEventListener('click', sendMessage);
@@ -313,6 +329,35 @@
         });
 
         update();
+
+        // 教七实说话的逻辑
+        const teachInput = document.getElementById('teach-input');
+        const teachBtn = document.getElementById('teach-btn');
+
+        function teachNanami() {
+            const text = teachInput.value.trim();
+            if (!text) return;
+
+            fetch('http://localhost:3000/api/teach', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: text })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    chatHistory.innerHTML += `<div style="color: #e5c07b;">【系统提示】七实学会了：${text}</div>`;
+                    chatHistory.scrollTop = chatHistory.scrollHeight;
+                    teachInput.value = ''; // 清空输入框
+                }
+            })
+            .catch(err => console.error("学习失败", err));
+        }
+
+        teachBtn.addEventListener('click', teachNanami);
+        teachInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') teachNanami();
+        });
     </script>
 </body>
 </html>

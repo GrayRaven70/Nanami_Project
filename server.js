@@ -6,77 +6,7 @@ const cors = require("cors");
 const app = express();
 app.use(cors());
 app.use(express.json());
-// 🌟 这行极其重要！它告诉服务器去 public 文件夹里找 index.html
 app.use(express.static("public"));
-
-// ==========================================
-// 🌟 极简神经网络类（纯手写，不依赖任何框架）
-// ==========================================
-class NanamiBrain {
-  constructor() {
-    // 输入层4个节点，隐藏层3个节点，输出层5个节点
-    // 初始化权重为 -1 到 1 之间的随机数
-    this.w1 = Array.from({ length: 3 }, () => Array.from({ length: 4 }, () => Math.random() * 2 - 1));
-    this.b1 = Array.from({ length: 3 }, () => Math.random() * 2 - 1);
-    
-    this.w2 = Array.from({ length: 5 }, () => Array.from({ length: 3 }, () => Math.random() * 2 - 1));
-    this.b2 = Array.from({ length: 5 }, () => Math.random() * 2 - 1);
-    
-    this.learningRate = 0.1; // 学习率
-  }
-
-  // 激活函数（Sigmoid），把数字压到 0~1 之间（算概率必备）
-  sigmoid(x) {
-    return 1 / (1 + Math.exp(-x));
-  }
-
-  // 前向传播：输入状态，算出5种情绪的概率
-  forward(inputs) {
-    // 隐藏层计算
-    let hidden = [];
-    for (let i = 0; i < 3; i++) {
-      let sum = this.b1[i];
-      for (let j = 0; j < 4; j++) {
-        sum += inputs[j] * this.w1[i][j];
-      }
-      hidden.push(this.sigmoid(sum));
-    }
-
-    // 输出层计算
-    let outputs = [];
-    for (let i = 0; i < 5; i++) {
-      let sum = this.b2[i];
-      for (let j = 0; j < 3; j++) {
-        sum += hidden[j] * this.w2[i][j];
-      }
-      outputs.push(this.sigmoid(sum));
-    }
-    return { hidden, outputs };
-  }
-
-  // 训练（反向传播）：告诉她“你刚才应该是什么情绪”
-  train(inputs, targetIndex) {
-    const { hidden, outputs } = this.forward(inputs);
-    
-    // 计算输出层的误差 (目标值-实际值)
-    let outputErrors = [];
-    for (let i = 0; i < 5; i++) {
-      let target = (i === targetIndex) ? 1.0 : 0.0;
-      outputErrors.push(target - outputs[i]);
-    }
-
-    // 简单更新权重（为了让你看懂，简化了复杂的微积分链式法则）
-    for (let i = 0; i < 5; i++) {
-      for (let j = 0; j < 3; j++) {
-        this.w2[i][j] += this.learningRate * outputErrors[i] * hidden[j];
-      }
-      this.b2[i] += this.learningRate * outputErrors[i];
-    }
-  }
-}
-
-// 实例化七实的大脑
-const brain = new NanamiBrain();
 
 // 连接七实的 MySQL 记忆库
 const db = mysql.createConnection({
@@ -95,7 +25,60 @@ db.connect((err) => {
   console.log("✅ 七实的记忆库 (MySQL) 已连接！");
 });
 
-// 接口 1：读取七实的状态（她醒来时第一件事）
+// ==========================================
+// 🌟 马尔可夫链核心逻辑（教她说话）
+// ==========================================
+let brainMemory = {}; // 存放学到的词语接龙
+
+// 学习文本，切分单词
+function learnText(text) {
+  // 按标点和空格切分词汇
+  const words = text
+    .replace(/[，。！？\s]/g, " ")
+    .split(" ")
+    .filter((w) => w.length > 0);
+  for (let i = 0; i < words.length - 1; i++) {
+    let current = words[i];
+    let next = words[i + 1];
+    if (!brainMemory[current]) brainMemory[current] = [];
+    brainMemory[current].push(next);
+  }
+}
+
+// 根据输入，利用马尔可夫链生成回复
+function generateReplyFromMemory(input) {
+  const words = input
+    .replace(/[，。！？\s]/g, " ")
+    .split(" ")
+    .filter((w) => w.length > 0);
+  let startWord = words.find((w) => brainMemory[w]);
+
+  if (!startWord) return null;
+
+  let current = startWord;
+  let result = [current];
+
+  // 接龙最多 5 个词
+  for (let i = 0; i < 5; i++) {
+    let nexts = brainMemory[current];
+    if (!nexts || nexts.length === 0) break;
+    current = nexts[Math.floor(Math.random() * nexts.length)];
+    result.push(current);
+  }
+  return result.join("");
+}
+
+// 启动服务器时，从数据库把所有学过的语料拉出来
+db.query("SELECT content FROM nanami_corpus", (err, results) => {
+  if (!err && results) {
+    results.forEach((row) => learnText(row.content));
+    console.log(`✅ 七实已从数据库中回忆起 ${results.length} 条语料！`);
+  }
+});
+
+// ==========================================
+// 接口 1 & 2：读取和保存状态
+// ==========================================
 app.get("/api/nanami", (req, res) => {
   db.query("SELECT * FROM nanami_state WHERE id = 1", (err, results) => {
     if (err) return res.status(500).send(err);
@@ -103,7 +86,6 @@ app.get("/api/nanami", (req, res) => {
   });
 });
 
-// 接口 2：保存七实的状态（她睡觉、被摸、或者关闭网页时）
 app.post("/api/nanami", (req, res) => {
   const { affection, energy } = req.body;
   const sql = "UPDATE nanami_state SET affection = ?, energy = ? WHERE id = 1";
@@ -113,100 +95,84 @@ app.post("/api/nanami", (req, res) => {
   });
 });
 
-// 接口 3：七实的心智引擎 2.0 (带上下文和情绪感染)
-app.post("/api/chat", (req, res) => {
-  const { message, energy, affection, wallFear, loveSeeking, recentHistory } = req.body;
-  const msg = message.toLowerCase();
-  
+// ==========================================
+// 🌟 接口 3：教七实说话（之前缺失的通道！）
+// ==========================================
+app.post("/api/teach", (req, res) => {
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ success: false });
+
+  db.query(
+    "INSERT INTO nanami_corpus (content) VALUES (?)",
+    [text],
+    (err, result) => {
+      if (err) {
+        console.error("存入语料失败", err);
+        return res.status(500).send(err);
+      }
+      learnText(text); // 实时存入内存，马上生效
+      res.json({ success: true, message: "七实学会了这句话！" });
+    },
+  );
+});
+
+// ==========================================
+// 🌟 接口 4：七实的心智引擎 4.0（具备自我认知）
+// ==========================================
+app.post("/api/chat", async (req, res) => {
+  const { message, energy, affection, wallFear, loveSeeking } = req.body;
+  const msg = message.trim();
+
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-  const act = () => pick(["（歪头）", "（轮子转了转）", "...", "（眼睛闪烁）", "叽..."]);
 
-  // 1. 看看你刚才说了什么（识别你的“刺激”）
-  let userIntent = "normal";
-  if (msg.includes("你好") || msg.includes("hi") || msg.includes("在吗")) userIntent = "greet";
-  if (msg.includes("笨蛋") || msg.includes("傻") || msg.includes("烦")) userIntent = "attack";
-  if (msg.includes("喜欢你") || msg.includes("爱") || msg.includes("抱")) userIntent = "love";
-  if (msg.includes("哭") || msg.includes("累") || msg.includes("难过")) userIntent = "sad";
-  if (msg.includes("对不起") || msg.includes("不哭") || msg.includes("乖")) userIntent = "comfort";
+  // 1. 名字绑定
+  const nameRegex =
+    /(?:你叫|你的名字是|以后你就叫)([a-zA-Z0-9\u4e00-\u9fa5]{1,10})/;
+  const nameMatch = msg.match(nameRegex);
 
-  // 2. 状态更新（你的话会影响她的心！）
-  if (userIntent === "love") {
-    affection = Math.min(100, affection + 5);
-    loveSeeking = Math.min(5, loveSeeking + 0.5);
-  } else if (userIntent === "attack") {
-    affection = Math.max(0, affection - 5);
-    wallFear = Math.min(5, wallFear + 0.3); // 骂她她会害怕
-  } else if (userIntent === "comfort" && wallFear > 2) {
-    wallFear = Math.max(0, wallFear - 1); // 安慰她，她的恐惧会降低
-    affection = Math.min(100, affection + 2);
+  if (nameMatch) {
+    const newName = nameMatch[1];
+    db.query(
+      "UPDATE nanami_state SET name = ? WHERE id = 1",
+      [newName],
+      (err) => {
+        if (err) console.error("名字存入失败", err);
+      },
+    );
+    return res.json({
+      reply: `（眼睛闪烁）唔... 记住啦！我是${newName}！`,
+      newAffection: Math.min(100, affection + 5),
+    });
   }
 
-  // 3. 确定情绪主导色（优先级：体能极限 > 心理创伤 > 极度黏人 > 开心 > 无聊）
-  let mood = "bored";
-  if (energy < 20) mood = "tired";
-  else if (wallFear > 3) mood = "scared";
-  else if (loveSeeking > 3.5) mood = "clingy";
-  else if (affection > 60 || userIntent === "love") mood = "happy";
+  // 2. 问名字
+  if (msg.includes("你叫什么") || msg.includes("你是谁")) {
+    db.query("SELECT name FROM nanami_state WHERE id = 1", (err, results) => {
+      let herName =
+        results && results[0] && results[0].name ? results[0].name : "七实";
+      return res.json({ reply: `（歪头）我是${herName}呀！你不记得我了吗？` });
+    });
+    return;
+  }
 
-  // 4. 情绪语法库（不是死板的句子，而是可以用公式拼装的组件）
-  const grammar = {
-    tired: { 
-      intro: ["呼...", "眼皮好重", "好累啊"], 
-      action: ["想睡觉", "转不动了", "电池空了"] 
-    },
-    scared: { 
-      intro: ["呜...", "外面好可怕", "你别走"], 
-      action: ["不想去墙边", "撞得好疼", "抱紧我"] 
-    },
-    clingy: { 
-      intro: ["你终于理我了！", "嘿嘿", "我一直在找你"], 
-      action: ["别关网页好不好", "想被摸摸", "再陪我待一会"] 
-    },
-    happy: { 
-      intro: ["今天真好呀", "暖洋洋的", "最喜欢现在了"], 
-      action: ["想围着你转圈", "感觉很开心", "能不能一直这样"] 
-    },
-    bored: { 
-      intro: ["唔...", "好安静", "发呆中"], 
-      action: ["你在干嘛呀", "光在哪呢", "好想找点事做"] 
+  // 3. 叫名字 & 调用马尔可夫链
+  db.query("SELECT name FROM nanami_state WHERE id = 1", (err, results) => {
+    let herName =
+      results && results[0] && results[0].name ? results[0].name : "七实";
+
+    if (msg.includes(herName)) {
+      return res.json({ reply: `（轮子转了转）！你在叫我吗？我在！` });
     }
-  };
 
-  // 5. 根据上下文，组装最终回复
-  let replyParts = [];
-  
-  // 肢体动作（必定出现）
-  replyParts.push(act());
+    let reply = generateReplyFromMemory(msg); // 调用接龙引擎
 
-  // 回应你的话
-  if (userIntent === "greet") replyParts.push("你在叫我？");
-  if (userIntent === "attack") replyParts.push(pick(["我才不笨呢！", "你怎么凶我...", "（缩成一团）"]));
-  if (userIntent === "comfort" && mood === "scared") replyParts.push("谢谢你安慰我...");
-  
-  // 情绪表达（从语法库里抽）
-  if (grammar[mood]) {
-    replyParts.push(pick(grammar[mood].intro));
-    replyParts.push(pick(grammar[mood].action));
-  }
+    if (!reply) {
+      let mood = energy < 20 ? "tired" : wallFear > 3 ? "scared" : "bored";
+      const acts = ["（歪头）", "叽...", "（轮子转了转）"];
+      reply = pick(acts) + "（似乎没听懂，但还是盯着你看）";
+    }
 
-  // 偶尔加一点“生理数据”的碎碎念
-  if (Math.random() > 0.7) {
-    if (energy < 40) replyParts.push(`（电量只剩 ${Math.round(energy)}% 了）`);
-    else if (affection > 50) replyParts.push(`（对你的好感度到了 ${affection} 分）`);
-  }
-
-  // 6. 拼装起来，用逗号和空格隔开
-  let finalReply = replyParts.join(" ");
-  
-  // 如果字数太少，再补一个动作
-  if (finalReply.length < 8) finalReply += act();
-
-  // 将更新后的数值发回前端（让前端同步更新状态）
-  res.json({ 
-    reply: finalReply,
-    newAffection: affection,
-    newLoveSeeking: loveSeeking,
-    newWallFear: wallFear
+    res.json({ reply: reply });
   });
 });
 
