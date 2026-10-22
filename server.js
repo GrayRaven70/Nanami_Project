@@ -2,7 +2,30 @@
 const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
-
+// ==========================================
+// 🌟 模糊匹配算法（计算两个词有多像）
+// ==========================================
+function getSimilarity(str1, str2) {
+  const len1 = str1.length;
+  const len2 = str2.length;
+  const matrix = Array.from({ length: len1 + 1 }, () => Array(len2 + 1).fill(0));
+  
+  for (let i = 0; i <= len1; i++) matrix[i][0] = i;
+  for (let j = 0; j <= len2; j++) matrix[0][j] = j;
+  
+  for (let i = 1; i <= len1; i++) {
+    for (let j = 1; j <= len2; j++) {
+      const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1, // 删除
+        matrix[i][j - 1] + 1, // 插入
+        matrix[i - 1][j - 1] + cost // 替换
+      );
+    }
+  }
+  // 返回相似度（0到1之间，1代表一模一样）
+  return 1 - matrix[len1][len2] / Math.max(len1, len2);
+}
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -145,14 +168,25 @@ app.post("/api/chat", async (req, res) => {
     });
   }
 
-  // 2. 问名字
-  if (msg.includes("你叫什么") || msg.includes("你是谁")) {
-    db.query("SELECT name FROM nanami_state WHERE id = 1", (err, results) => {
-      let herName =
-        results && results[0] && results[0].name ? results[0].name : "七实";
-      return res.json({ reply: `（歪头）我是${herName}呀！你不记得我了吗？` });
+  // 2. 问名字（启动模糊匹配！让她自己拓宽对问题的理解）
+  // 她脑海里的标准问题：
+  const standardQuestions = ["你是谁", "你叫什么", "你的名字"];
+
+  // 把你发的话，和标准问题逐一对比相似度
+  let isAskingName = false;
+  for (let q of standardQuestions) {
+    // 如果相似度大于 0.4（包含关系或者错别字都能认出来）
+    if (getSimilarity(msg, q) > 0.4 || msg.includes(q)) {
+      isAskingName = true;
+      break;
+    }
+  }
+
+  // 如果她判断出你在问名字（或者你刚好只打了“你叫”两个字）
+  if (isAskingName || msg === "你叫" || msg === "你是") {
+    return res.json({
+      reply: `（歪头）我是${herMemoryName}呀！你不记得我了吗？`,
     });
-    return;
   }
 
   // 3. 叫名字 & 调用马尔可夫链
@@ -174,7 +208,7 @@ app.post("/api/chat", async (req, res) => {
 
     res.json({ reply: reply });
   });
-});
+};);
 
 app.listen(3000, () => {
   console.log("🚀 七实的神经中枢运行在 http://localhost:3000");
