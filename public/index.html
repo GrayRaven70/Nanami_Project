@@ -2,21 +2,42 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>七实 - 拥有记忆的躯壳</title>
+    <title>七实 - 作为她自己</title>
     <style>
         body { background-color: #0b0d11; color: #abb2bf; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; margin-top: 20px; }
         canvas { background-color: #17191e; border: 2px solid #3e4451; border-radius: 12px; cursor: crosshair; }
         #status { margin-top: 15px; font-size: 14px; color: #61afef; display: flex; gap: 20px; }
         .stat { display: flex; align-items: center; gap: 5px; }
+        
+        /* 聊天框样式 */
+        #chat-container { margin-top: 15px; width: 800px; display: flex; flex-direction: column; gap: 10px; }
+        #chat-history { height: 100px; background: #17191e; border: 1px solid #3e4451; border-radius: 6px; padding: 10px; overflow-y: auto; font-size: 14px; color: #98c379; line-height: 1.5; }
+        #input-area { display: flex; gap: 10px; }
+        #chat-input { flex: 1; padding: 12px; background: #17191e; border: 1px solid #3e4451; color: #abb2bf; border-radius: 6px; outline: none; transition: border 0.3s; }
+        #chat-input:focus { border-color: #61afef; }
+        #send-btn { padding: 0 25px; background: #61afef; color: #111; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.3s; }
+        #send-btn:hover { background: #98c379; }
     </style>
 </head>
 <body>
-    <h2>七实 · 灵魂存档版</h2>
+    <h2>七实 · 纯状态驱动版</h2>
     <p style="color: #5c6370; font-size: 13px;">关掉网页再打开，看看她记不记得你。</p>
+    
     <canvas id="canvas" width="800" height="600"></canvas>
+    
     <div id="status">
         <div class="stat">⚡ 体力: <span id="energy-val">100</span>%</div>
         <div class="stat">💖 好感度: <span id="affection-val">0</span></div>
+        <div class="stat">🧠 恐惧/黏人: <span id="weights-val">0.0 / 0.0</span></div>
+    </div>
+
+    <!-- 聊天交互区 -->
+    <div id="chat-container">
+        <div id="chat-history">（这是七实的心智终端。你对她说的任何话，她都会根据自己当前的心情来回应。）</div>
+        <div id="input-area">
+            <input type="text" id="chat-input" placeholder="对七实说点什么（或者发点乱码试试）...">
+            <button id="send-btn">发送</button>
+        </div>
     </div>
 
     <script>
@@ -24,7 +45,9 @@
         const ctx = canvas.getContext('2d');
         const energyVal = document.getElementById('energy-val');
         const affectionVal = document.getElementById('affection-val');
+        const weightsVal = document.getElementById('weights-val'); 
 
+        // 七实的“出厂初始化数据”
         let nanami = {
             x: 400, y: 300, vx: 0, vy: 0, radius: 18,
             eyeAngle: 0, wheelOffset: 0,
@@ -32,10 +55,15 @@
             mood: 'bored', moodTimer: 0,
             bubbleText: '等待连接记忆库...',
             bubbleTimer: 120,
-            saveTimer: 0 // 用于定时保存到数据库
+            saveTimer: 0, 
+            memory: [],        
+            // 智能权重：控制她的行为倾向
+            weights: {
+                wallFear: 0,   
+                loveSeeking: 0 
+            }
         };
         let mouse = { x: 400, y: 300, active: false };
-        let particles = [];
 
         // === 核心：从 MySQL 读取她的记忆 ===
         fetch('http://localhost:3000/api/nanami')
@@ -44,14 +72,9 @@
                 if (data) {
                     nanami.affection = data.affection;
                     nanami.energy = data.energy;
-                    // 根据好感度说不同的话
-                    if (nanami.affection > 50) {
-                        nanami.bubbleText = '你回来啦！我好想你。';
-                    } else if (nanami.affection > 0) {
-                        nanami.bubbleText = '又是你呀，你好。';
-                    } else {
-                        nanami.bubbleText = '初次见面，你是谁？';
-                    }
+                    if (nanami.affection > 50) nanami.bubbleText = '你回来啦！我好想你。';
+                    else if (nanami.affection > 0) nanami.bubbleText = '又是你呀，你好。';
+                    else nanami.bubbleText = '初次见面，你是谁？';
                     nanami.bubbleTimer = 180;
                 }
             })
@@ -72,10 +95,9 @@
             }).catch(err => console.log("保存失败", err));
         }
 
-        // 在页面关闭时保存一次
         window.addEventListener('beforeunload', saveMemory);
 
-        // --- 以下为原有的交互逻辑 ---
+        // 鼠标移动（视作光源）
         canvas.addEventListener('mousemove', (e) => {
             const rect = canvas.getBoundingClientRect();
             mouse.x = e.clientX - rect.left;
@@ -86,6 +108,7 @@
         });
         canvas.addEventListener('mouseleave', () => { mouse.active = false; });
 
+        // 鼠标点击（抚摸）
         canvas.addEventListener('mousedown', () => {
             const dist = Math.hypot(nanami.x - mouse.x, nanami.y - mouse.y);
             if (dist < nanami.radius + 20) {
@@ -98,13 +121,17 @@
                 else if (nanami.affection < 70) nanami.bubbleText = '嘿嘿，好暖和...';
                 else nanami.bubbleText = '最喜欢你啦！';
                 nanami.bubbleTimer = 90;
-                saveMemory(); // 摸完立刻存一次档
+                
+                // 被摸得越多，越渴望被摸（最高5点）
+                nanami.weights.loveSeeking = Math.min(5, nanami.weights.loveSeeking + 0.2);
+                saveMemory(); 
             }
         });
 
         function update() {
-            // 体力与运动逻辑（同上一版）
             let speed = Math.hypot(nanami.vx, nanami.vy);
+            
+            // 体力逻辑
             if (nanami.mood !== 'sleeping') {
                 nanami.energy -= speed * 0.02;
                 if (nanami.energy <= 0) { nanami.mood = 'sleeping'; nanami.vx = 0; nanami.vy = 0; }
@@ -119,10 +146,27 @@
                 if (nanami.moodTimer === 0) nanami.mood = 'bored';
             }
 
+            // 行为逻辑（注入经验）
             if (nanami.mood !== 'sleeping') {
                 if (nanami.mood === 'bored') {
                     if (Math.random() < 0.03) {
                         nanami.vx += (Math.random() - 0.5) * 1.5; nanami.vy += (Math.random() - 0.5) * 1.5;
+                    }
+                    
+                    // 智能1：因为喜欢你，主动靠近
+                    if (nanami.weights.loveSeeking > 1 && mouse.active && Math.random() < 0.01 * nanami.weights.loveSeeking) {
+                        nanami.mood = 'curious'; 
+                    }
+                    
+                    // 智能2：因为怕墙，往屏幕中心跑
+                    if (nanami.weights.wallFear > 2 && Math.random() < 0.05) {
+                        let cx = 400 - nanami.x; 
+                        let cy = 300 - nanami.y;
+                        let cd = Math.hypot(cx, cy);
+                        if (cd > 10) { 
+                            nanami.vx += (cx / cd) * (nanami.weights.wallFear * 0.05);
+                            nanami.vy += (cy / cd) * (nanami.weights.wallFear * 0.05);
+                        }
                     }
                 } else if (nanami.mood === 'curious' && mouse.active) {
                     let dx = mouse.x - nanami.x, dy = mouse.y - nanami.y;
@@ -132,30 +176,41 @@
                 }
             }
 
+            // 物理引擎
             nanami.vx *= 0.92; nanami.vy *= 0.92;
             if (speed > 3) { nanami.vx = (nanami.vx / speed) * 3; nanami.vy = (nanami.vy / speed) * 3; }
             nanami.x += nanami.vx; nanami.y += nanami.vy;
 
-            if (nanami.x < nanami.radius || nanami.x > canvas.width - nanami.radius) { nanami.vx *= -1; nanami.x = Math.max(nanami.radius, Math.min(canvas.width - nanami.radius, nanami.x)); }
-            if (nanami.y < nanami.radius || nanami.y > canvas.height - nanami.radius) { nanami.vy *= -1; nanami.y = Math.max(nanami.radius, Math.min(canvas.height - nanami.radius, nanami.y)); }
+            // 边界检测与“长记性”
+            let hit = false;
+            if (nanami.x < nanami.radius || nanami.x > canvas.width - nanami.radius) { 
+                nanami.vx *= -1; nanami.x = Math.max(nanami.radius, Math.min(canvas.width - nanami.radius, nanami.x)); hit = true; 
+            }
+            if (nanami.y < nanami.radius || nanami.y > canvas.height - nanami.radius) { 
+                nanami.vy *= -1; nanami.y = Math.max(nanami.radius, Math.min(canvas.height - nanami.radius, nanami.y)); hit = true; 
+            }
+            if (hit && nanami.mood !== 'sleeping') {
+                nanami.bubbleText = '呜，撞到了...';
+                nanami.bubbleTimer = 60;
+                nanami.weights.wallFear = Math.min(5, nanami.weights.wallFear + 0.5);
+            }
 
+            // 眼睛与UI
             nanami.eyeAngle = Math.atan2(mouse.active ? mouse.y - nanami.y : nanami.vy, mouse.active ? mouse.x - nanami.x : nanami.vx);
             if (Math.hypot(nanami.vx, nanami.vy) > 0.5) nanami.wheelOffset += Math.hypot(nanami.vx, nanami.vy) * 0.5;
 
             energyVal.innerText = Math.round(nanami.energy);
             affectionVal.innerText = nanami.affection;
+            weightsVal.innerText = `${nanami.weights.wallFear.toFixed(1)} / ${nanami.weights.loveSeeking.toFixed(1)}`;
 
-            // 每隔大约3秒（180帧）自动保存一次体力和好感
             nanami.saveTimer++;
-            if (nanami.saveTimer > 180) {
-                saveMemory();
-                nanami.saveTimer = 0;
-            }
+            if (nanami.saveTimer > 180) { saveMemory(); nanami.saveTimer = 0; }
 
             draw();
             requestAnimationFrame(update);
         }
 
+        // 渲染引擎
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (mouse.active) {
@@ -198,8 +253,63 @@
             }
         }
 
-        // 页面加载完成，开始更新
-        setInterval(() => { if (nanami.bubbleTimer > 0) nanami.bubbleTimer--; }, 16); // 简单地处理气泡计时
+        // 气泡计时器
+        setInterval(() => { if (nanami.bubbleTimer > 0) nanami.bubbleTimer--; }, 16); 
+
+        // === 聊天逻辑：连接心智引擎 ===
+        const chatInput = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('send-btn');
+        const chatHistory = document.getElementById('chat-history');
+
+        function sendMessage() {
+            const text = chatInput.value.trim();
+            if (!text) return;
+
+            // 1. 显示你发的话
+            chatHistory.innerHTML += `<div>你：${text}</div>`;
+            chatInput.value = ''; 
+            chatHistory.scrollTop = chatHistory.scrollHeight; 
+
+            // 2. 她思考时的状态
+            nanami.bubbleText = '...';
+            nanami.bubbleTimer = 60;
+
+            // 3. 发送当前的所有状态给后端
+            fetch('http://localhost:3000/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    message: text,
+                    energy: nanami.energy,
+                    affection: nanami.affection,
+                    wallFear: nanami.weights.wallFear,
+                    loveSeeking: nanami.weights.loveSeeking
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                // 4. 显示她的回复
+                chatHistory.innerHTML += `<div style="color: #61afef;">七实：${data.reply}</div>`;
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+                
+                // 5. 头顶气泡同步
+                nanami.bubbleText = data.reply;
+                nanami.bubbleTimer = 180; 
+                
+                // 6. 聊天让她开心，加好感
+                nanami.affection = Math.min(100, nanami.affection + 1);
+                saveMemory();
+            })
+            .catch(err => {
+                chatHistory.innerHTML += `<div style="color: red;">七实好像没听见...(网络错误)</div>`;
+            });
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
         update();
     </script>
 </body>
