@@ -274,7 +274,7 @@
             nanami.bubbleText = '...';
             nanami.bubbleTimer = 60;
 
-            // 3. 发送当前的所有状态给后端
+                       // 3. 发送给后端，带上她的状态，和最近3句聊天记录
             fetch('http://localhost:3000/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -283,26 +283,28 @@
                     energy: nanami.energy,
                     affection: nanami.affection,
                     wallFear: nanami.weights.wallFear,
-                    loveSeeking: nanami.weights.loveSeeking
+                    loveSeeking: nanami.weights.loveSeeking,
+                    // 🌟 加上这一行：把最近3条聊天记录（如果有的话）传过去
+                    recentHistory: chatHistory.innerText.split('\n').slice(-3) 
                 })
             })
             .then(res => res.json())
             .then(data => {
-                // 4. 显示她的回复
+                // 显示她的回复
                 chatHistory.innerHTML += `<div style="color: #61afef;">七实：${data.reply}</div>`;
                 chatHistory.scrollTop = chatHistory.scrollHeight;
                 
-                // 5. 头顶气泡同步
+                // 同步到头顶气泡
                 nanami.bubbleText = data.reply;
                 nanami.bubbleTimer = 180; 
                 
-                // 6. 聊天让她开心，加好感
-                nanami.affection = Math.min(100, nanami.affection + 1);
-                saveMemory();
+                // 🌟 同步她因为对话而改变的心理状态
+                if (data.newAffection !== undefined) nanami.affection = data.newAffection;
+                if (data.newLoveSeeking !== undefined) nanami.weights.loveSeeking = data.newLoveSeeking;
+                if (data.newWallFear !== undefined) nanami.weights.wallFear = data.newWallFear;
+                
+                saveMemory(); // 存进数据库
             })
-            .catch(err => {
-                chatHistory.innerHTML += `<div style="color: red;">七实好像没听见...(网络错误)</div>`;
-            });
         }
 
         sendBtn.addEventListener('click', sendMessage);
