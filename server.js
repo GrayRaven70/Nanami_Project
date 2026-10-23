@@ -1,18 +1,22 @@
 // server.js - 七实的中枢神经与心智引擎
-const express = require("express");
-const mysql = require("mysql2");
-const cors = require("cors");
+const express = require("express"); //引入Express框架，是一个简洁而灵活的Node.js Web应用框架
+const mysql = require("mysql2");  //引入MySQL2库，用于连接和操作MySQL数据库
+const cors = require("cors"); //引入CORS中间件，允许跨域请求
+
 // ==========================================
-// 🌟 模糊匹配算法（计算两个词有多像）
+// 🌟 模糊匹配算法（计算两个词有多像） 
 // ==========================================
 function getSimilarity(str1, str2) {
   const len1 = str1.length;
   const len2 = str2.length;
   const matrix = Array.from({ length: len1 + 1 }, () => Array(len2 + 1).fill(0));
-  
+//动态规划
   for (let i = 0; i <= len1; i++) matrix[i][0] = i;
   for (let j = 0; j <= len2; j++) matrix[0][j] = j;
   
+//编辑距离算法
+//注意，该算法根本没办法解决“你是谁”和“你叫什么”这种语义相似的问题，只能解决错别字、拼写错误、字符缺失等问题。
+//AI用的是词向量，通过大数据训练出来的模型，能理解语义相似度，而不是单纯的字符相似度。
   for (let i = 1; i <= len1; i++) {
     for (let j = 1; j <= len2; j++) {
       const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
@@ -26,6 +30,7 @@ function getSimilarity(str1, str2) {
   // 返回相似度（0到1之间，1代表一模一样）
   return 1 - matrix[len1][len2] / Math.max(len1, len2);
 }
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -53,29 +58,49 @@ db.connect((err) => {
 // ==========================================
 let herMemoryName = "七实"; 
 let brainMemory = {}; // 存放学到的词语接龙
+
 // 🌟 她大脑里的新宇宙：词共现矩阵
 // 格式：{ "星星": { "漂亮": 3, "夜空": 1 }, "漂亮": { "星星": 3 } }
 let semanticNetwork = {}; 
+let loadedDictionary = new Set(); // 用 Set 存词典，查找速度极快（O(1)时间复杂度）
 let wordCounts = {}; // 记录每个词出现的总次数，用来算概率
 
-// 1. 学习：把一句话里的词两两连线
+// 1. 学习：聪明地切词并建立语义连线
 function learnText(text) {
-  // 简单的单字/双字切分（你可以根据实际情况调整）
-  let words = text.replace(/[，。！？\s]/g, ' ').split(' ').filter(w => w.length > 0);
-  
-  // 如果是长句，我们可以按字拆，也可以按词拆，这里为了简单按字拆并提取双字词
+  // 先去掉标点符号
+  let cleanText = text.replace(/[，。！？\s]/g, ''); 
   let finalWords = [];
-  for (let w of words) {
-    if (w.length > 2) {
-      for (let i = 0; i < w.length - 1; i++) {
-        finalWords.push(w.substring(i, i + 2)); // 提取双字词，比如“星星”、“漂亮”
+  let i = 0;
+
+  // 🌟 核心算法：最大正向匹配
+  while (i < cleanText.length) {
+    let matched = false;
+    
+    // 每次尝试切取最多 4 个字（比如“大肥鱼”是 3 个字，最多尝试切 4 个）
+    // 从长到短找，这样能优先切出“大肥鱼”，而不是“大肥”+“鱼”
+    for (let len = 4; len > 0; len--) {
+      let word = cleanText.substring(i, i + len);
+      
+      // 如果这个词在基础词典里，或者在之前学过的网络里
+      if (loadedDictionary.has(word) || semanticNetwork[word]) {
+        finalWords.push(word);
+        i += len;
+        matched = true;
+        break;
       }
-    } else {
-      finalWords.push(w);
+    }
+
+    // 如果实在没在词典里找到，就把这一个字单独切出来（比如生僻字）
+    if (!matched) {
+      finalWords.push(cleanText[i]);
+      i++;
     }
   }
 
-  // 建立语义连线
+  // 打印出来看看她是怎么切词的（方便你调试）
+  console.log(`✂️ 七实将句子切分为：`, finalWords);
+
+// 建立语义连线
   for (let i = 0; i < finalWords.length; i++) {
     let w1 = finalWords[i];
     wordCounts[w1] = (wordCounts[w1] || 0) + 1;
@@ -90,53 +115,86 @@ function learnText(text) {
     }
   }
 }
-
-// 2. 思考：基于概率联想生成句子
-function generateReplyFromMemory(input) {
-  // 看看输入里有没有她认识的词
-  let foundWord = null;
-  for (let w in semanticNetwork) {
-    if (input.includes(w)) {
-      foundWord = w;
-      break;
+ 
+// 2. 思考：基于概率联想生成句子（升级版：多步漫游）
+  function generateReplyFromMemory(input) {
+    // 1. 看看输入里有没有她认识的词
+    let foundWord = null;
+    for (let w in semanticNetwork) {
+      if (input.includes(w)) {
+        foundWord = w;
+        break;
+      }
     }
-  }
-  
-  if (!foundWord) return null;
 
-  // 顺着这根线找关联词，根据权重随机挑一个
-  let relatedWords = semanticNetwork[foundWord];
-  let bestWord = null;
-  let maxWeight = 0;
-  
-  for (let rw in relatedWords) {
-    let weight = relatedWords[rw];
-    if (weight > maxWeight) {
-      maxWeight = weight;
-      bestWord = rw;
+    if (!foundWord) return null;
+
+    // 2. 开始多步游走（接龙）
+    let currentWord = foundWord;
+    let resultWords = [currentWord]; // 把这个词放进篮子里
+    let visited = new Set([currentWord]); // 🌟 核心：记录走过的路，防止在原地打转（比如 A->B->A）
+
+    // 我们让她最多走 5 步（你可以改成 8 步，让她变成终极话痨）
+    for (let step = 0; step < 5; step++) {
+      let relatedWords = semanticNetwork[currentWord];
+      if (!relatedWords) break;
+
+      // 用之前的“抽奖箱”逻辑，根据权重抽下一个词
+      let pool = [];
+      for (let rw in relatedWords) {
+        // 🌟 如果这个词刚才已经说过了，就不放进抽奖箱，防止啰嗦
+        if (!visited.has(rw)) {
+          for (let i = 0; i < relatedWords[rw]; i++) {
+            pool.push(rw);
+          }
+        }
+      }
+
+      // 如果抽奖箱空了（说明没词可接了），就停下来
+      if (pool.length === 0) break;
+
+      // 抽下一个词
+      let nextWord = pool[Math.floor(Math.random() * pool.length)];
+
+      // 把新词加入篮子和已访问记录
+      resultWords.push(nextWord);
+      visited.add(nextWord);
+
+      // 把当前词更新，为下一步做准备
+      currentWord = nextWord;
     }
+
+    // 3. 组合回复（用省略号连接，显得她很笨拙）
+    // 比如：“喜欢... 欢看... 看星... 星星”
+    return resultWords.join("... ");
   }
 
-  if (!bestWord) return foundWord;
-
-  // 用加权概率抽词（比如星星和漂亮连了3次，和夜空连了1次，那抽中漂亮的概率就是75%）
-  let pool = [];
-  for (let rw in relatedWords) {
-    for (let i = 0; i < relatedWords[rw]; i++) {
-      pool.push(rw);
-    }
+// ==========================================
+// 🌟 启动时：加载名字、加载词典、再回忆语料
+// ==========================================
+db.query("SELECT name FROM nanami_state WHERE id = 1", (err, results) => {
+  if (!err && results && results[0] && results[0].name) {
+    herMemoryName = results[0].name;
+    console.log(`✅ 七实记起了自己的名字：${herMemoryName}`);
   }
-  let resultWord = pool[Math.floor(Math.random() * pool.length)];
+});
 
-  // 组合回复
-  return `${foundWord}... ${resultWord}`;
-}
-
-// 启动服务器时，从数据库把所有学过的语料拉出来
-db.query("SELECT content FROM nanami_corpus", (err, results) => {
+// 🌟 核心修复：先加载字典
+db.query("SELECT word FROM nanami_dictionary", (err, results) => {
   if (!err && results) {
-    results.forEach((row) => learnText(row.content));
-    console.log(`✅ 七实已从数据库中回忆起 ${results.length} 条语料！`);
+    results.forEach(row => loadedDictionary.add(row.word));
+    console.log(`📖 七实已从数据库中加载了 ${loadedDictionary.size} 个词汇！`);
+    
+    // 🌟 等字典加载完，再开始回忆语料并切词！
+    db.query("SELECT content FROM nanami_corpus", (err2, results2) => {
+      if (!err2 && results2) {
+        results2.forEach((row) => learnText(row.content));
+        console.log(`✅ 七实已从数据库中回忆起 ${results2.length} 条语料！`);
+      }
+    });
+
+  } else {
+    console.log("❌ 词典加载失败，请检查表！");
   }
 });
 
@@ -173,6 +231,19 @@ app.post("/api/teach", (req, res) => {
   const { text } = req.body;
   if (!text) return res.status(400).json({ success: false });
 
+  // 🌟 肥鱼修复：教说话的时候，也要判断是不是在教名字
+  const nameRegex =
+    /(?:你叫|你的名字是|以后你就叫)([a-zA-Z0-9\u4e00-\u9fa5]{1,10})/;
+  const isQuestion =
+    text.includes("什么") || text.includes("谁") || text.includes("？");
+  const nameMatch = !isQuestion ? text.match(nameRegex) : null;
+
+  if (nameMatch) {
+    const newName = nameMatch[1];
+    herMemoryName = newName; // 更新内存
+    db.query("UPDATE nanami_state SET name = ? WHERE id = 1", [newName]); // 更新数据库
+  }
+
   db.query(
     "INSERT INTO nanami_corpus (content) VALUES (?)",
     [text],
@@ -181,7 +252,7 @@ app.post("/api/teach", (req, res) => {
         console.error("存入语料失败", err);
         return res.status(500).send(err);
       }
-      learnText(text); // 实时存入内存，马上生效
+      learnText(text);
       res.json({ success: true, message: "七实学会了这句话！" });
     },
   );
@@ -194,6 +265,12 @@ app.post("/api/chat", async (req, res) => {
   const { message, energy, affection, wallFear, loveSeeking } = req.body;
   const msg = message.trim();
 
+  // 🌟 赛博脑电图开始
+  //console.log(`\n========== 收到消息 ==========`);
+  //console.log(`[你的输入]: ${msg}`);
+  //console.log(`[七实脑海里的词库]:`, Object.keys(semanticNetwork));
+  // 🌟 赛博脑电图结束
+
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
   // 1. 名字绑定
@@ -203,6 +280,7 @@ app.post("/api/chat", async (req, res) => {
 
   if (nameMatch) {
     const newName = nameMatch[1];
+    herMemoryName = newName; // 🌟 加上这一行，肥鱼在此！
     db.query(
       "UPDATE nanami_state SET name = ? WHERE id = 1",
       [newName],
