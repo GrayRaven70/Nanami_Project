@@ -51,44 +51,85 @@ db.connect((err) => {
 // ==========================================
 // 🌟 马尔可夫链核心逻辑（教她说话）
 // ==========================================
+let herMemoryName = "七实"; 
 let brainMemory = {}; // 存放学到的词语接龙
+// 🌟 她大脑里的新宇宙：词共现矩阵
+// 格式：{ "星星": { "漂亮": 3, "夜空": 1 }, "漂亮": { "星星": 3 } }
+let semanticNetwork = {}; 
+let wordCounts = {}; // 记录每个词出现的总次数，用来算概率
 
-// 学习文本，切分单词
+// 1. 学习：把一句话里的词两两连线
 function learnText(text) {
-  // 按标点和空格切分词汇
-  const words = text
-    .replace(/[，。！？\s]/g, " ")
-    .split(" ")
-    .filter((w) => w.length > 0);
-  for (let i = 0; i < words.length - 1; i++) {
-    let current = words[i];
-    let next = words[i + 1];
-    if (!brainMemory[current]) brainMemory[current] = [];
-    brainMemory[current].push(next);
+  // 简单的单字/双字切分（你可以根据实际情况调整）
+  let words = text.replace(/[，。！？\s]/g, ' ').split(' ').filter(w => w.length > 0);
+  
+  // 如果是长句，我们可以按字拆，也可以按词拆，这里为了简单按字拆并提取双字词
+  let finalWords = [];
+  for (let w of words) {
+    if (w.length > 2) {
+      for (let i = 0; i < w.length - 1; i++) {
+        finalWords.push(w.substring(i, i + 2)); // 提取双字词，比如“星星”、“漂亮”
+      }
+    } else {
+      finalWords.push(w);
+    }
+  }
+
+  // 建立语义连线
+  for (let i = 0; i < finalWords.length; i++) {
+    let w1 = finalWords[i];
+    wordCounts[w1] = (wordCounts[w1] || 0) + 1;
+    if (!semanticNetwork[w1]) semanticNetwork[w1] = {};
+
+    // 和它后面的词建立联系（不局限于紧挨着，同在一句话里都算）
+    for (let j = i + 1; j < finalWords.length; j++) {
+      let w2 = finalWords[j];
+      semanticNetwork[w1][w2] = (semanticNetwork[w1][w2] || 0) + 1;
+      if (!semanticNetwork[w2]) semanticNetwork[w2] = {};
+      semanticNetwork[w2][w1] = (semanticNetwork[w2][w1] || 0) + 1; // 双向连线
+    }
   }
 }
 
-// 根据输入，利用马尔可夫链生成回复
+// 2. 思考：基于概率联想生成句子
 function generateReplyFromMemory(input) {
-  const words = input
-    .replace(/[，。！？\s]/g, " ")
-    .split(" ")
-    .filter((w) => w.length > 0);
-  let startWord = words.find((w) => brainMemory[w]);
-
-  if (!startWord) return null;
-
-  let current = startWord;
-  let result = [current];
-
-  // 接龙最多 5 个词
-  for (let i = 0; i < 5; i++) {
-    let nexts = brainMemory[current];
-    if (!nexts || nexts.length === 0) break;
-    current = nexts[Math.floor(Math.random() * nexts.length)];
-    result.push(current);
+  // 看看输入里有没有她认识的词
+  let foundWord = null;
+  for (let w in semanticNetwork) {
+    if (input.includes(w)) {
+      foundWord = w;
+      break;
+    }
   }
-  return result.join("");
+  
+  if (!foundWord) return null;
+
+  // 顺着这根线找关联词，根据权重随机挑一个
+  let relatedWords = semanticNetwork[foundWord];
+  let bestWord = null;
+  let maxWeight = 0;
+  
+  for (let rw in relatedWords) {
+    let weight = relatedWords[rw];
+    if (weight > maxWeight) {
+      maxWeight = weight;
+      bestWord = rw;
+    }
+  }
+
+  if (!bestWord) return foundWord;
+
+  // 用加权概率抽词（比如星星和漂亮连了3次，和夜空连了1次，那抽中漂亮的概率就是75%）
+  let pool = [];
+  for (let rw in relatedWords) {
+    for (let i = 0; i < relatedWords[rw]; i++) {
+      pool.push(rw);
+    }
+  }
+  let resultWord = pool[Math.floor(Math.random() * pool.length)];
+
+  // 组合回复
+  return `${foundWord}... ${resultWord}`;
 }
 
 // 启动服务器时，从数据库把所有学过的语料拉出来
@@ -99,21 +140,28 @@ db.query("SELECT content FROM nanami_corpus", (err, results) => {
   }
 });
 
-// ==========================================
-// 接口 1 & 2：读取和保存状态
-// ==========================================
+// 接口 1：读取七实的状态（她醒来时第一件事）
 app.get("/api/nanami", (req, res) => {
   db.query("SELECT * FROM nanami_state WHERE id = 1", (err, results) => {
     if (err) return res.status(500).send(err);
+    // 返回她所有的数据，包括心里的恐惧和爱
     res.json(results[0]);
   });
 });
 
+// 接口 2：保存七实的状态（她睡觉、被摸、或者关闭网页时）
 app.post("/api/nanami", (req, res) => {
-  const { affection, energy } = req.body;
-  const sql = "UPDATE nanami_state SET affection = ?, energy = ? WHERE id = 1";
-  db.query(sql, [affection, energy], (err, result) => {
-    if (err) return res.status(500).send(err);
+  // 🌟 把这两个值也解构出来
+  const { affection, energy, wallFear, loveSeeking } = req.body;
+  
+  // 🌟 更新 SQL 语句，把恐惧和黏人也写进去
+  const sql = "UPDATE nanami_state SET affection = ?, energy = ?, wall_fear = ?, love_seeking = ? WHERE id = 1";
+  
+  db.query(sql, [affection, energy, wallFear, loveSeeking], (err, result) => {
+    if (err) {
+      console.error("保存状态失败", err);
+      return res.status(500).send(err);
+    }
     res.json({ success: true });
   });
 });
@@ -208,7 +256,7 @@ app.post("/api/chat", async (req, res) => {
 
     res.json({ reply: reply });
   });
-};);
+});
 
 app.listen(3000, () => {
   console.log("🚀 七实的神经中枢运行在 http://localhost:3000");

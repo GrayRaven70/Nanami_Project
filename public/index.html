@@ -79,6 +79,10 @@
                     nanami.affection = data.affection;
                     nanami.energy = data.energy;
                     
+                    // 🌟 把数据库里的“性格”读回她的身体里！
+                    // 加个 || 0 是防止数据库里没有这列时变成 undefined
+                    nanami.weights.wallFear = data.wall_fear || 0; 
+                    nanami.weights.loveSeeking = data.love_seeking || 0; 
                     // 🌟 核心新增：读取她的名字！如果数据库里没有，默认叫七实
                     let herName = data.name || "七实";
                     
@@ -105,11 +109,13 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
                     affection: nanami.affection, 
-                    energy: Math.round(nanami.energy) 
+                    energy: Math.round(nanami.energy),
+                    // 🌟 把性格权重也打包发过去
+                    wallFear: nanami.weights.wallFear,
+                    loveSeeking: nanami.weights.loveSeeking
                 })
             }).catch(err => console.log("保存失败", err));
         }
-
         window.addEventListener('beforeunload', saveMemory);
 
         // 鼠标移动（视作光源）
